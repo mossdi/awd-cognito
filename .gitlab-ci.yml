@@ -1,0 +1,67 @@
+stages:
+  - build-docker-container
+  - deploy
+  - deploy-aws
+  - deploy_aws_ecs
+  
+variables: 
+  AWS_MS_CONGNITO_REGISTRY: 639071073513.dkr.ecr.us-east-1.amazonaws.com
+  AWS_MS_CONGNITO_TAG: 639071073513.dkr.ecr.us-east-1.amazonaws.com/ms-cognito:latest
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+    
+
+deploy app:
+  stage: build-docker-container
+  tags:
+    - build-docker
+  only:
+    - dev
+  variables:
+    TAG: repo.cappers.ca:5050/futurewise-ede/ms-cognito:latest
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD repo.cappers.ca:5050
+    - docker build -t $TAG .
+    - docker push $TAG
+
+
+deploy aws:
+  stage: deploy-aws
+  image: 
+    name: amazon/aws-cli
+    entrypoint: [""]
+  services:
+    - docker:dind    
+  before_script:
+    - amazon-linux-extras install docker
+    - aws --version
+    - docker --version
+  tags:
+    - docker-runner-only-please
+  only:
+    - aws-staging
+  script:
+    - docker build -t $AWS_MS_CONGNITO_TAG . 
+    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $AWS_MS_CONGNITO_REGISTRY
+    - docker push $AWS_MS_CONGNITO_TAG
+
+# push the new image to Fargate
+deploy_aws_ecs:
+  image:
+    name: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+  stage: deploy_aws_ecs
+  only:
+    - aws-staging
+  script:
+    - aws ecs update-service --cluster FW-EDE-CLUSTER --service ms-db --force-new-deployment
+
+
+#deploy:
+#  stage: deploy
+#  tags:
+#    - build-docker
+#  script:
+#    # start deploy
+#    - ssh root@159.203.13.240 "cd /app/futurewise/; docker pull repo.cappers.ca:5050/futurewise-ede/ms-ede-ses:latest; docker-compose down; docker-compose up -d"
+#  only:
+#    - dev
